@@ -3,7 +3,7 @@
  * Plugin Name: BWCDN GCS Sync
  * Description: Google Cloud Storage Uploader and Syncing engine
  * Author: Vikash, Brandwiki
- * Version: 1.1
+ * Version: 1.0
  * Text Domain: bwcdn-cs-uploader
  * Author URI: https://www.brandwiki.today
  *
