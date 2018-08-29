@@ -1,0 +1,579 @@
+/**
+ *
+ *
+ */
+
+// Application
+var wpStatelessApp = angular.module('wpStatelessApp', [])
+
+// Controller
+.controller('wpStatelessCssJssTools', ['$scope', '$http', function ($scope, $http, $q) {
+
+  $scope.action = 'sync_css_js';
+  $scope.method = 'start';
+  $scope.bulk_size = 8;
+  $scope.is_img_url_changes = 1;
+
+
+  /**
+   * Counters
+   * @type {number}
+   */
+  $scope.objectsCounter = 0;
+  $scope.objectsTotal   = 0;
+
+  /**
+   * Error storage
+   * @type {boolean}
+   */
+  $scope.error = false;
+
+  /**
+   * Flags
+   * @type {boolean}
+   */
+  $scope.isRunning = false;
+  $scope.isLoading = false;
+  $scope.continue  = true;
+
+  /**
+   *
+   * @type {{images: boolean, other: boolean}}
+   */
+  $scope.progresses = {
+    site_sync_css_js: false,
+    admin_sync_css_js: false
+  };
+
+  /**
+   *
+   * @type {{images: boolean, other: boolean}}
+   */
+  $scope.fails = {
+    site_sync_css_js: false,
+    admin_sync_css_js: false
+  }
+
+  /**
+   * IDs storage
+   * @type {Array}
+   */
+  $scope.objectIDs = [];
+
+  /**
+   *
+   * @type {Array}
+   */
+  $scope.chunkIDs = [];
+
+  /**
+   * Log
+   * @type {Array}
+   */
+  $scope.log = [];
+
+  /**
+   * Status text
+   * @type {boolean}
+   */
+  $scope.status = false;
+
+  /**
+   * Init
+   */
+  $scope.init = function() {
+    jQuery("#regenthumbs-bar").progressbar();
+  }
+
+  /**
+   *
+   * @param callback
+   */
+  $scope.getCurrentProgresses = function( callback ) {
+    $scope.isLoading = true;
+
+    $http({
+      method: 'GET',
+      url: ajaxurl,
+      params: {
+        action: 'stateless_cssjs_get_current_progresses'
+      }
+    }).then(function(response){
+      var data = response.data || {};
+
+      if ( data.success ) {
+        if ( typeof data.data !== 'undefined' ) {
+          $scope.progresses.images = data.data.images;
+          $scope.progresses.other = data.data.other;
+          if ( 'function' === typeof callback ) {
+            callback();
+          }
+        } else {
+          console.error( 'Could not retrieve progress' );
+        }
+      } else {
+        console.error( 'Could not retrieve progress' );
+      }
+
+      $scope.isLoading = false;
+    }, function(response) {
+      console.error( 'Could not retrieve progress' );
+      $scope.isLoading = false;
+    });
+  };
+
+  /**
+   *
+   */
+  $scope.getCurrentProgresses();
+
+  /**
+   *
+   * @param callback
+   */
+  function getAllFails( callback ) {
+    $scope.isLoading = true;
+    $http({
+      method: 'GET',
+      url: ajaxurl,
+      params: {
+        action: 'stateless_cssjs_get_all_fails'
+      }
+    }).then(function(response){
+      var data = response.data || {};
+
+      if ( data.success ) {
+        if ( typeof data.data !== 'undefined' ) {
+
+          $scope.fails.images = data.data.images;
+            $scope.fails.other = data.data.other;
+
+          if ( 'function' === typeof callback ) {
+            callback();
+          }
+        } else {
+          console.error( 'Could not get fails' );
+        }
+      } else {
+        console.error( 'Could not get fails' );
+      }
+
+      $scope.isLoading = false;
+    }, function(response) {
+      console.error( 'Could not get fails' );
+
+      $scope.isLoading = false;
+    });
+  };
+
+  getAllFails();
+
+  /**
+   * Form submit handler
+   * @param e
+   * @returns {boolean}
+   */
+  $scope.processStart = function(e) {
+    $scope.error = false;
+    $scope.objectsCounter = 0;
+    $scope.objectsTotal = 0;
+    $scope.objectIDs = [];
+    $scope.chunkIDs = [];
+
+    if ( $scope.method === 'fix' ) {
+
+      if ( $scope.action ) {
+        switch( $scope.action ) {
+          case 'sync_css_js':
+            $scope.objectIDs = $scope.fails.site_sync_css_js;
+            $scope.sync_css_js();
+            break;
+          case 'admin_sync_css_js':
+            $scope.objectIDs = $scope.fails.admin_sync_css_js;
+            $scope.admin_sync_css_js();
+            break;
+          default: break;
+        }
+      }
+
+      return false;
+    }
+
+    var cont = 0;
+    if ( 'continue' === $scope.method ) {
+      cont = 1;
+    }
+
+    if ( $scope.action ) {
+      switch( $scope.action ) {
+        case 'sync_css_js':
+          $scope.getSiteCssJs( $scope.regenerateImages, cont );
+          break;
+        case 'admin_sync_css_js':
+          $scope.getWPAdminCssJs( $scope.syncFiles, cont );
+          break;
+        default: break;
+      }
+    }
+
+    return false;
+  };
+
+  /**
+   * Stop process
+   */
+  $scope.processStop = function() {
+    $scope.status = 'Stopping...';
+    $scope.continue = false;
+  };
+
+  function array_bulk( arr, bulk_size ) {
+    var groups = [];
+    var i;
+
+    for ( i = 0; i < bulk_size; i++ ) {
+      groups[ i ] = [];
+    }
+
+    for ( i = 0; i < arr.length; i ++ ) {
+      groups[ i % bulk_size ].push( arr[ i ] );
+    }
+
+    return groups;
+  }
+
+  $scope.finishProcess = function( chunk_id ) {
+    var mode = 'images';
+    if ( 'sync_non_images' === $scope.action ) {
+      mode = 'other';
+    }
+
+    if ( $scope.objectsCounter >= $scope.objectsTotal ) {
+      // process finished
+
+      $http({
+        method: 'GET',
+        url: ajaxurl,
+        params: {
+          action: 'stateless_reset_progress',
+          mode: mode
+        }
+      }).then(function(response){
+        if($scope.is_img_url_changes) {
+          if ($scope.objectIDs.length > 0) {
+           $scope.updateDBUrl();
+          }
+        }
+        $scope.progresses[ mode ] = false;
+
+        $scope.status = 'Finished';
+        $scope.isRunning = false;
+      }, function(response) {
+        console.error( 'Could not reset progress' );
+      });
+    } else if ( 'undefined' !== typeof chunk_id ) {
+      // process cancelled, but this is only a chunk finishing request
+      
+      $scope.chunkIDs[ chunk_id ] = false;
+      var all_done = true;
+      for ( var i in $scope.chunkIDs ) {
+        if ( false !== $scope.chunkIDs[ i ] ) {
+          all_done = false;
+          break;
+        }
+      }
+      if ( all_done ) {
+        $scope.getCurrentProgresses( function() {
+          $scope.status = 'Cancelled';
+          $scope.isRunning = false;
+        });
+      }
+    } else {
+      // process cancelled
+
+      $scope.getCurrentProgresses( function() {
+        $scope.status = 'Cancelled';
+        $scope.isRunning = false;
+      });
+    }
+  };
+
+  /**
+   * Load images IDs
+   * @param callback
+   */
+  $scope.getSiteCssJs = function( callback, cont ) {
+
+    $scope.continue = true;
+    $scope.isLoading = true;
+    $scope.status = 'Loading Css & Js Media Objects...';
+
+    $http({
+      method: 'GET',
+      url: ajaxurl,
+      params: {
+        action: 'get_cssjs_media_ids',
+        continue: cont
+      }
+    }).then(function(response){
+      var data = response.data || {};
+
+      if ( data.success ) {
+        if ( typeof callback === 'function' ) {
+          if ( typeof data.data !== 'undefined' ) {
+            $scope.objectIDs = data.data;
+            callback();
+          } else {
+            $scope.status = 'Error appeared';
+            $scope.error = "IDs are malformed";
+          }
+        }
+      } else {
+        $scope.status = 'Error appeared';
+        $scope.error = data.data || "Request failed";
+      }
+
+      $scope.isLoading = false;
+
+    }, function(response) {
+      $scope.error = response.data || "Request failed";
+      $scope.status = 'Error appeared';
+      $scope.isLoading = false;
+    });
+
+  };
+
+  /**
+   * Load non-images media files
+   * @param callback
+   */
+  $scope.getOtherMedia = function( callback, cont ) {
+
+    $scope.continue = true;
+    $scope.isLoading = true;
+    $scope.status = 'Loading non-image Media Objects...';
+
+    $http({
+      method: 'GET',
+      url: ajaxurl,
+      params: {
+        action: 'get_other_media_ids',
+        continue: cont
+      }
+    }).then(function(response){
+      var data = response.data || {};
+
+      if ( data.success ) {
+        if ( typeof callback === 'function' ) {
+          if ( typeof data.data !== 'undefined' ) {
+            $scope.objectIDs = data.data;
+            callback();
+          } else {
+            $scope.status = 'Error appeared';
+            $scope.error = "IDs are malformed";
+          }
+        }
+      } else {
+        $scope.status = 'Error appeared';
+        $scope.error = data.data || "Request failed";
+      }
+
+      $scope.isLoading = false;
+
+    }, function(response) {
+      $scope.error = response.data || "Request failed";
+      $scope.status = 'Error appeared';
+      $scope.isLoading = false;
+    });
+
+  };
+
+  /**
+   * Run sync for files
+   */
+  $scope.syncFiles = function() {
+    $scope.isRunning = true;
+    $scope.objectsTotal = $scope.objectIDs.length;
+    $scope.objectsCounter = 0;
+    $scope.status = 'Processing files (' + $scope.objectsTotal + ' total)...';
+
+    jQuery("#regenthumbs-bar").progressbar("value", 0);
+    jQuery("#regenthumbs-bar-percent").html( "0%" );
+
+    if ( $scope.objectIDs.length ) {
+      //$scope.syncSingleFile( $scope.objectIDs.shift() );
+      $scope.chunkIDs = array_bulk( $scope.objectIDs, $scope.bulk_size );
+      for ( var i in $scope.chunkIDs ) {
+        $scope.syncSingleFile( $scope.chunkIDs[ i ].shift(), i );
+      }
+    }
+  }
+
+  /**
+   * Run images regeneration
+   * @param ids
+   */
+  $scope.regenerateImages = function() {
+    $scope.isRunning = true;
+    $scope.objectsTotal = $scope.objectIDs.length;
+    $scope.objectsCounter = 0;
+    $scope.status = 'Processing images (' + $scope.objectsTotal + ' total)...';
+
+    jQuery("#regenthumbs-bar").progressbar("value", 0);
+    jQuery("#regenthumbs-bar-percent").html( "0%" );
+  
+
+    if ( $scope.objectIDs.length ) {
+      //$scope.regenerateSingle( $scope.objectIDs.shift() );
+      $scope.chunkIDs = array_bulk( $scope.objectIDs, $scope.bulk_size );
+      for ( var i in $scope.chunkIDs ) {
+        $scope.regenerateSingle( $scope.chunkIDs[ i ].shift(), i );
+      }
+
+    }
+  };
+
+  /**
+   * Process Update DB
+   * @param id
+   */
+  $scope.updateDBUrl = function() {
+    $http.defaults.headers.post["Content-Type"] = "application/json; charset=utf-8";
+    data = {
+      dellocal: $scope.del_local,
+      old_url: $scope.old_url,
+      new_url: $scope.new_url
+    };
+    console.log(data);
+    $http.post(ajaxurl+'?action=update_db_url', data ).then(
+        function(response) {
+          var data = response.data || {};
+          console.log(data);
+        },
+        function(response) {
+          $scope.error = response.data || "Request failed";
+          $scope.status = 'Error appeared';
+          $scope.isRunning = false;
+        }
+    );
+    
+   /* $http({
+      method: 'GET',
+      url: ajaxurl,
+      params: {
+        action: "update_db_url",
+        old_url: $scope.old_url,
+        new_url: $scope.new_url,
+        dellocal: $scope.del_local
+      }
+    }).then(
+        function(response) {
+          var data = response.data || {};
+          console.log(data);
+        },
+        function(response) {
+          $scope.error = response.data || "Request failed";
+          $scope.status = 'Error appeared';
+          $scope.isRunning = false;
+        }
+    );*/
+
+  }
+
+  /**
+   * Process Single Image
+   * @param id
+   */
+  $scope.regenerateSingle = function( id, chunk_id ) {
+  //  console.log($scope.local_server_deletion);
+    $http({
+      method: 'GET',
+      url: ajaxurl,
+      params: {
+        action: "stateless_process_image",
+        id: id,
+        "dellocal": $scope.del_local,
+        "is_img_url_changes":  $scope.is_img_url_changes,
+        "local_server_deletion": $scope.local_server_deletion
+      }
+    }).then(
+      function(response) {
+        var data = response.data || {};
+        $scope.log.push({message:data.data});
+
+        jQuery("#regenthumbs-bar").progressbar( "value", ( ++$scope.objectsCounter / $scope.objectsTotal ) * 100 );
+        jQuery("#regenthumbs-bar-percent").html( Math.round( ( $scope.objectsCounter / $scope.objectsTotal ) * 1000 ) / 10 + "%" );
+
+        if ( 'undefined' !== typeof chunk_id ) {
+          if ( $scope.chunkIDs[ chunk_id ].length && $scope.continue ) {
+            $scope.regenerateSingle( $scope.chunkIDs[ chunk_id ].shift(), chunk_id );
+          } else {
+            $scope.finishProcess( chunk_id );
+          }
+        } else {
+          if ( $scope.objectIDs.length && $scope.continue ) {
+            $scope.regenerateSingle( $scope.objectIDs.shift() );
+          } else {
+            $scope.finishProcess();
+          }
+        }
+      },
+      function(response) {
+        $scope.error = response.data || "Request failed";
+        $scope.status = 'Error appeared';
+        $scope.isRunning = false;
+      }
+    );
+
+  }
+
+  /**
+   * Process single file
+   * @param id
+   */
+  $scope.syncSingleFile = function( id, chunk_id ) {
+    $scope.check === 1
+    $http({
+      method: 'GET',
+      url: ajaxurl,
+      params: {
+        action: "stateless_process_file",
+        id: id,
+        "dellocal": $scope.del_local,
+        "is_img_url_changes":  $scope.is_img_url_changes,
+        "local_server_deletion":  $scope.local_server_deletion
+      }
+    }).then(
+      function(response) {
+        var data = response.data || {};
+        $scope.log.push({message:data.data});
+
+        jQuery("#regenthumbs-bar").progressbar( "value", ( ++$scope.objectsCounter / $scope.objectsTotal ) * 100 );
+        jQuery("#regenthumbs-bar-percent").html( Math.round( ( $scope.objectsCounter / $scope.objectsTotal ) * 1000 ) / 10 + "%" );
+
+        if ( 'undefined' !== typeof chunk_id ) {
+          if ( $scope.chunkIDs[ chunk_id ].length && $scope.continue ) {
+            $scope.syncSingleFile( $scope.chunkIDs[ chunk_id ].shift(), chunk_id );
+          } else {
+            $scope.finishProcess( chunk_id );
+          }
+        } else {
+          if ( $scope.objectIDs.length && $scope.continue ) {
+            $scope.syncSingleFile( $scope.objectIDs.shift() );
+          } else {
+            $scope.finishProcess();
+          }
+        }
+      },
+      function(response) {
+        $scope.error = response.data || "Request failed";
+        $scope.status = 'Error appeared';
+        $scope.isRunning = false;
+      }
+    );
+
+  }
+
+ 
+
+}]);
