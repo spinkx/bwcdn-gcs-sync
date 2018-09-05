@@ -295,10 +295,11 @@ namespace wpCloud\StatelessMedia {
         $metadata = wp_get_attachment_metadata( $post_id );
 
         /* Be sure we have the same bucket in settings and have GS object's name before proceed. */
+        $bucket_name = 'https://storage.googleapis.com/'.ud_get_stateless_media()->get( 'sm.bucket' );
         if(
           isset( $metadata[ 'gs_name' ] ) &&
           isset( $metadata[ 'gs_bucket' ] ) &&
-          $metadata[ 'gs_bucket' ] == ud_get_stateless_media()->get( 'sm.bucket' )
+          $metadata[ 'gs_bucket' ] ==  $bucket_name
         ) {
 
           $client = ud_get_stateless_media()->get_client();

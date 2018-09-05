@@ -186,7 +186,7 @@ namespace wpCloud\StatelessMedia {
                                 add_filter('image_make_intermediate_size', array($this, 'handle_on_fly'));
                             }
     
-                            if ($this->get('sm.delete_remote') == 'true') {
+                            if ($this->get('sm.delete_remote') == true) {
                                 /**
                                  * On physical file deletion we remove any from GS
                                  */
